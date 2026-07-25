@@ -129,9 +129,9 @@ export async function POST(req: NextRequest) {
     let revisedPromptOutput = "";
 
     if (provider === "openai") {
-      // 尺寸與比例適配
-      let imageSize: "1024x1024" | "1792x1024" | "1024x1792" = "1024x1024";
-      if (aspectRatio === "A4") imageSize = "1024x1792"; // A4 2K 直向比例
+      // 尺寸與比例適配 (精準 A4 比例 1 : 1.414)
+      let imageSize: string = "1024x1024";
+      if (aspectRatio === "A4") imageSize = "1024x1448"; // 真正 ISO 216 A4 比例 (1024x1448)
       if (aspectRatio === "16:9") imageSize = "1792x1024";
       if (aspectRatio === "9:16") imageSize = "1024x1792";
 

@@ -116,9 +116,21 @@ git push
 1. 登入 [Vercel 官網](https://vercel.com)。
 2. 點擊 **`Add New...`** -> **`Project`**。
 3. 選擇連結您的 **GitHub 帳號**，並找到剛才建立的儲存庫 `ai-vision-image-studio`，點擊 **`Import`**。
-4. 在 **Environment Variables (環境變數)** 區塊設定預設值：
-   * `OPENAI_API_KEY`: 您的 OpenAI API Key (選填)
-   * `REPLICATE_API_TOKEN`: 您的 Replicate Token (選填)
+### 步驟與欄位填寫說明：
+1. 點擊畫面右上角的黑色按鈕 **`Add Environment Variable`**。
+2. 在彈出的輸入視窗中填入以下欄位：
+   * **Key (變數名稱)**：`OPENAI_API_KEY`
+   * **Value (變數值)**：填入您的真實 API 金鑰（例如：`sk-proj-...` 或中轉站金鑰 `sk-...`）
+   * **Environment (環境選取)**：勾選 Production, Preview, Development (預設已全選)
+3. 點擊 **`Save`** 儲存。
+
+#### 💡 進階環境變數 (若您使用第三方中轉主機，如 yunwu.ai)：
+您可再次點擊 **`Add Environment Variable`** 新增：
+   * **Key**：`OPENAI_BASE_URL`
+   * **Value**：`https://yunwu.ai`
+
+> **備註 (選填說明)**：
+> 如果您希望網站部署後，由使用者自己在網頁右上角的「API Key 設定」按鈕中輸入個人金鑰，那麼 Vercel 這裡的環境變數**完全不需要填寫，保持空白即可**！系統會自動使用使用者在前端輸入的自訂 Key。
 5. 點擊 **`Deploy`**。
 6. **自動持續部署 (Continuous Deployment)**：
    未來您只要在本地端執行 `git push` 推送程式碼至 GitHub，Vercel 就會**自動觸發構建並實時更新上線網站**！
