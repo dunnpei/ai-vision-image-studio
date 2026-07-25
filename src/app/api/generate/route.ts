@@ -218,17 +218,10 @@ export async function POST(req: NextRequest) {
       };
 
       try {
-        if (aspectRatio === "A4") {
-          // A4 循序發送：避免中轉站並發競爭條件導致第一張退回 1:1 預設尺寸
-          for (let i = 0; i < imageCount; i++) {
-            await fetchOneImage(i);
-          }
-        } else {
-          // 標準比例：使用 Promise.all 平行發送以最大化速度
-          await Promise.all(
-            Array.from({ length: imageCount }, (_, i) => fetchOneImage(i))
-          );
-        }
+        // 所有比例均採用 Promise.all 平行發送，將總耗時控制在單張時間內 (~10-12秒)，防止 Vercel 超時
+        await Promise.all(
+          Array.from({ length: imageCount }, (_, i) => fetchOneImage(i))
+        );
       } catch (fetchErr: any) {
         return NextResponse.json<GenerateApiResponse>(
           { success: false, error: fetchErr.message || "圖像生成請求失敗" },

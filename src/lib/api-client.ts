@@ -18,6 +18,14 @@ export async function generateImageApi(
 
     const responseText = await response.text();
 
+    // 防禦性檢查：若遇到 Vercel 執行超時
+    if (responseText.includes("FUNCTION_INVOCATION_TIMEOUT")) {
+      return {
+        success: false,
+        error: "Vercel 部署函數執行超時 (FUNCTION_INVOCATION_TIMEOUT)。因中轉站生成圖片較耗時，已將請求優化為全平行發送 (~10秒)，請重新點擊生成！",
+      };
+    }
+
     // 防禦性檢查：若回傳為 HTML 網頁 (以 <!DOCTYPE 或 <html 開頭)
     if (responseText.trim().startsWith("<")) {
       return {
