@@ -24,6 +24,7 @@ export interface GenerateApiRequest {
   image: string | null; // Base64 Data URL
   config: GenerationConfig;
   userKeys?: Partial<UserApiKeys>;
+  analyzedPrompt?: string; // 預先分析好的 Vision 描述
 }
 
 export interface GenerateApiResponse {

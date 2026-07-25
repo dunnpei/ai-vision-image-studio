@@ -59,3 +59,27 @@ export async function generateImageApi(
     };
   }
 }
+
+/**
+ * 發送 Vision 分析請求至獨立 /api/analyze 端點
+ * 快速於 2 秒內完成圖像風格特徵提取
+ */
+export async function analyzeImageApi(
+  image: string,
+  userKeys?: Record<string, any>
+): Promise<{ success: boolean; analyzedPrompt?: string; error?: string }> {
+  try {
+    const response = await fetch("/api/analyze", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ image, userKeys }),
+    });
+    const text = await response.text();
+    if (text.trim().startsWith("<")) {
+      return { success: false, error: "Vision 分析 API 回傳 HTML 錯誤" };
+    }
+    return JSON.parse(text);
+  } catch (err: any) {
+    return { success: false, error: err.message || "Vision 分析失敗" };
+  }
+}

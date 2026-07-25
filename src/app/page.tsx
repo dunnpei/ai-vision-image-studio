@@ -10,7 +10,7 @@ import { HistoryGallery } from "@/components/HistoryGallery";
 import { ApiKeyModal } from "@/components/ApiKeyModal";
 import { GenerateApiResponse, GenerationConfig, HistoryItem, UserApiKeys } from "@/types";
 import { cropToA4Ratio, downloadImage } from "@/lib/image-utils";
-import { generateImageApi } from "@/lib/api-client";
+import { generateImageApi, analyzeImageApi } from "@/lib/api-client";
 import { Sparkles, AlertCircle, Wand2 } from "lucide-react";
 
 export default function Home() {
@@ -99,7 +99,7 @@ export default function Home() {
     });
   };
 
-  // 發送生成請求
+  // 發送生成請求（兩階段架構：步驟一獨立 Vision 分析 ~2s，步驟二平行生圖 ~8s，100% 避開 Vercel 超時）
   const handleGenerate = async () => {
     if (!config.prompt.trim() && !uploadedImage) {
       setApiError("請輸入提示詞 (Prompt) 或上傳參考圖片！");
@@ -110,36 +110,65 @@ export default function Home() {
     setIsGenerating(true);
     setResult(null);
 
-    const response = await generateImageApi({
-      image: uploadedImage,
-      config,
-      userKeys,
-    });
+    const activeModel = config.provider === "openai" ? (userKeys.imageModel || "dall-e-3") : "flux-schnell";
+    const activeBaseUrl = userKeys.baseUrl || "https://api.openai.com";
 
-    setIsGenerating(false);
+    try {
+      let visionAnalyzedPrompt = "";
 
-    if (response.success && response.imageUrls && response.imageUrls.length > 0) {
-      const activeModel = config.provider === "openai" ? (userKeys.imageModel || "dall-e-3") : "flux-schnell";
-      const activeBaseUrl = userKeys.baseUrl || "https://api.openai.com";
+      // 步驟一：若有上傳參考圖，先獨立執行 Vision 分析 (~2秒完成)
+      if (uploadedImage) {
+        const analyzeRes = await analyzeImageApi(uploadedImage, userKeys);
+        if (analyzeRes.success && analyzeRes.analyzedPrompt) {
+          visionAnalyzedPrompt = analyzeRes.analyzedPrompt;
+        }
+      }
+
+      // 步驟二：前端同時發出 N 個獨立生圖請求 (每個請求固定 n:1，單獨佔用 ~8秒 Serverless 實例，100% 不超時)
+      const singleConfig: GenerationConfig = { ...config, imageCount: 1 };
+      const requests = Array.from({ length: config.imageCount }, () =>
+        generateImageApi({
+          image: uploadedImage,
+          config: singleConfig,
+          userKeys,
+          analyzedPrompt: visionAnalyzedPrompt || undefined,
+        })
+      );
+
+      const responses = await Promise.all(requests);
+      setIsGenerating(false);
+
+      const allUrls: string[] = [];
+      let firstRevised: string | undefined;
+
+      for (let i = 0; i < responses.length; i++) {
+        const res = responses[i];
+        if (!res.success || !res.imageUrls?.length) {
+          setApiError(res.error || `圖像 ${i + 1} 生成失敗。`);
+          return;
+        }
+        allUrls.push(...res.imageUrls);
+        if (i === 0) firstRevised = res.revisedPrompt;
+      }
 
       const newResult = {
-        imageUrls: response.imageUrls,
-        analyzedPrompt: response.analyzedPrompt,
-        revisedPrompt: response.revisedPrompt,
+        imageUrls: allUrls,
+        analyzedPrompt: visionAnalyzedPrompt || undefined,
+        revisedPrompt: firstRevised,
         usedModel: activeModel,
         usedBaseUrl: activeBaseUrl,
       };
 
       setResult(newResult);
 
-      const newItems: HistoryItem[] = response.imageUrls.map((url, idx) => ({
+      const newItems: HistoryItem[] = allUrls.map((url, idx) => ({
         id: `${Date.now()}-${idx}`,
         timestamp: Date.now(),
         originalImage: uploadedImage,
         generatedImageUrl: url,
         prompt: config.prompt || "無文字提示詞 (從圖片分析)",
         aspectRatio: config.aspectRatio,
-        analyzedPrompt: response.analyzedPrompt,
+        analyzedPrompt: visionAnalyzedPrompt || undefined,
       }));
 
       const updatedHistory = [...newItems, ...history];
@@ -153,8 +182,9 @@ export default function Home() {
       setTimeout(() => {
         resultRef.current?.scrollIntoView({ behavior: "smooth" });
       }, 200);
-    } else {
-      setApiError(response.error || "生成失敗，請檢查 API Key 或參數設定。");
+    } catch (err: any) {
+      setIsGenerating(false);
+      setApiError(err.message || "生成過程發生未預期錯誤，請稍後再試。");
     }
   };
 

@@ -7,7 +7,7 @@ export const maxDuration = 60;
 export async function POST(req: NextRequest) {
   try {
     const body: GenerateApiRequest = await req.json();
-    const { image, config, userKeys } = body;
+    const { image, config, userKeys, analyzedPrompt: preAnalyzedPrompt } = body;
 
     if (!config) {
       return NextResponse.json<GenerateApiResponse>(
@@ -49,12 +49,12 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    let analyzedPrompt = "";
+    let analyzedPrompt = preAnalyzedPrompt || "";
 
     // -------------------------------------------------------------
-    // 步驟一：多模態圖片特徵分析 (Vision Model)
+    // 步驟一：多模態圖片特徵分析 (若尚未分析過才執行)
     // -------------------------------------------------------------
-    if (image && openaiApiKey) {
+    if (!analyzedPrompt && image && openaiApiKey) {
       try {
         const visionApiEndpoint = `${baseUrl}/v1/chat/completions`;
         const visionResponse = await fetch(visionApiEndpoint, {
