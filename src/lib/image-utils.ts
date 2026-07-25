@@ -87,13 +87,27 @@ export async function cropToA4Ratio(imageUrl: string): Promise<string> {
 }
 
 /**
- * 觸發瀏覽器下載圖片
+ * 觸發瀏覽器下載圖片（支援 Base64 Data URL 與遠端 URL，自訂檔名 100% 生效）
  */
 export async function downloadImage(url: string, filename: string = "generated-image.png"): Promise<void> {
   try {
-    const response = await fetch(url);
-    const blob = await response.blob();
-    const blobUrl = URL.createObjectURL(blob);
+    let blobUrl: string;
+
+    if (url.startsWith("data:")) {
+      // Base64 Data URL：直接轉 Blob，自訂檔名 100% 生效
+      const [header, data] = url.split(",");
+      const mime = header.match(/data:(.*?);/)?.[1] || "image/png";
+      const binary = atob(data);
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+      const blob = new Blob([bytes], { type: mime });
+      blobUrl = URL.createObjectURL(blob);
+    } else {
+      // 遠端 URL：嘗試 fetch 後轉 Blob
+      const response = await fetch(url);
+      const blob = await response.blob();
+      blobUrl = URL.createObjectURL(blob);
+    }
 
     const a = document.createElement("a");
     a.href = blobUrl;

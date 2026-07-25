@@ -160,6 +160,36 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
         </div>
       </div>
 
+      {/* 生成數量選擇 */}
+      <div>
+        <label className="block text-xs font-semibold text-slate-300 mb-1.5 flex items-center justify-between">
+          <span className="flex items-center space-x-1.5">
+            <Layers className="w-3.5 h-3.5 text-indigo-400" />
+            <span>生成數量 (Image Count)</span>
+          </span>
+          <span className="text-[11px] text-amber-400/80 font-normal">
+            每張獨立計費，{config.imageCount} 張 = {config.imageCount}× 費用
+          </span>
+        </label>
+        <div className="grid grid-cols-4 gap-2">
+          {([1, 2, 3, 4] as const).map((count) => (
+            <button
+              key={count}
+              type="button"
+              onClick={() => handleUpdate("imageCount", count)}
+              className={`py-2 px-3 rounded-xl border text-sm font-bold flex flex-col items-center justify-center transition ${
+                config.imageCount === count
+                  ? "bg-indigo-600 border-indigo-400 text-white shadow-md shadow-indigo-600/30"
+                  : "bg-slate-900/60 border-slate-700/60 text-slate-300 hover:bg-slate-800"
+              }`}
+            >
+              <span>{count}</span>
+              <span className="text-[10px] font-normal opacity-70">張</span>
+            </button>
+          ))}
+        </div>
+      </div>
+
       {/* Image-to-Image 重繪強度 Slider (當有圖片時顯示) */}
       {hasUploadedImage && (
         <div className="p-3.5 rounded-xl bg-slate-900/60 border border-slate-800">

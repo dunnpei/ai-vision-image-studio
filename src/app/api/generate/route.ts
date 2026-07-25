@@ -16,7 +16,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const { prompt, negativePrompt, aspectRatio, provider = "openai", strength = 0.75 } = config;
+    const { prompt, negativePrompt, aspectRatio, provider = "openai", strength = 0.75, imageCount = 1 } = config;
 
     // 取得 API Key（優先使用前端傳入的個人 Key，其次為伺服器環境變數）
     const openaiApiKey = userKeys?.openaiKey || process.env.OPENAI_API_KEY;
@@ -69,7 +69,7 @@ export async function POST(req: NextRequest) {
               {
                 role: "system",
                 content:
-                  "你是一位資深的視覺分析大師與 AI 圖像 Prompt 專家。請深入分析使用者上傳的圖片，提煉出該圖的藝術風格、構圖、主題色彩、光影質感與核心物件特徵。請輸出一段精準且詳細的英文風格描述 (Under 100 words)，適合做為 AI 繪圖模型的提示詞參考。",
+                  "你是一位資深的視覺分析大師與 AI 圖像 Prompt 專家。請深入分析使用者上傳的圖片，提煉出該圖的藝術風格、主題色彩、光影質感與核心物件特徵（注意：嚴禁描述或包含任何圖片形狀、畫布長寬比例或尺寸詞彙，如 square, 1:1, portrait, landscape, vertical, horizontal 等）。請輸出一段精準且詳細的英文風格與視覺細節描述 (Under 100 words)，適合做為 AI 繪圖模型的提示詞參考。",
               },
               {
                 role: "user",
@@ -111,7 +111,15 @@ export async function POST(req: NextRequest) {
     let synthesizedPrompt = prompt.trim();
 
     if (analyzedPrompt) {
-      synthesizedPrompt = `${synthesizedPrompt ? `${synthesizedPrompt}. ` : ""}[Style & Visual references from uploaded image: ${analyzedPrompt}]`;
+      // 徹底過濾 Vision 分析結果中可能殘留的長寬比/形狀詞彙，避免干擾指定的 aspectRatio
+      const cleanedAnalyzedPrompt = analyzedPrompt
+        .replace(/\b(square|1:1|aspect ratio|landscape|portrait|horizontal|vertical|wide|tall|16:9|9:16|4:3|3:4)\b/gi, "")
+        .replace(/\s+/g, " ")
+        .trim();
+
+      if (cleanedAnalyzedPrompt) {
+        synthesizedPrompt = `${synthesizedPrompt ? `${synthesizedPrompt}. ` : ""}[Style & Visual references from uploaded image: ${cleanedAnalyzedPrompt}]`;
+      }
     }
 
     if (negativePrompt && negativePrompt.trim()) {
@@ -136,96 +144,100 @@ export async function POST(req: NextRequest) {
     let revisedPromptOutput = "";
 
     if (provider === "openai") {
-      // 尺寸與比例適配
       const imageApiEndpoint = `${baseUrl}/v1/images/generations`;
 
-      let requestPayload: any;
+      // 建立單次請求 Payload 工廠函式（固定 n:1，同時帶入所有可能的尺寸參數）
+      const buildPayload = () => {
+        if (aspectRatio === "A4") {
+          // 同時攜帶 size: "1024x1448"、width/height 與 aspect_ratio
+          // 防範中轉站 API 在缺少 size 欄位時自動補上預設 "1024x1024" (1:1)
+          return {
+            model: imageModel,
+            prompt: synthesizedPrompt,
+            n: 1,
+            size: "1024x1448",
+            width: 1024,
+            height: 1448,
+            aspect_ratio: "1:1.414",
+            quality: "hd",
+            response_format: "url",
+          };
+        } else {
+          let imageSize = "1024x1024";
+          if (aspectRatio === "16:9") imageSize = "1792x1024";
+          if (aspectRatio === "9:16") imageSize = "1024x1792";
+          return {
+            model: imageModel,
+            prompt: synthesizedPrompt,
+            n: 1,
+            size: imageSize,
+            quality: "hd",
+            response_format: "url",
+          };
+        }
+      };
 
-      if (aspectRatio === "A4") {
-        // A4 比例：完全不傳 size 欄位，僅傳 width/height
-        // gpt-image-2 遇到 size 與 width/height 並存時，優先採用 size 而忽略 width/height
-        // 因此必須徹底移除 size，讓模型直接依照 width:1024, height:1448 生成精準 A4 圖片
-        requestPayload = {
-          model: imageModel,
-          prompt: synthesizedPrompt,
-          n: 1,
-          width: 1024,
-          height: 1448,
-          quality: "hd",
-          response_format: "url",
-        };
-      } else {
-        // 其他標準比例：使用白名單 size 字串
-        let imageSize = "1024x1024";
-        if (aspectRatio === "16:9") imageSize = "1792x1024";
-        if (aspectRatio === "9:16") imageSize = "1024x1792";
+      // 解析所有回應，收集圖片 URL
+      const allUrls: string[] = [];
+      let firstRevisedPrompt = "";
 
-        requestPayload = {
-          model: imageModel,
-          prompt: synthesizedPrompt,
-          n: 1,
-          size: imageSize,
-          quality: "hd",
-          response_format: "url",
-        };
-      }
-
-      const dalleResponse = await fetch(imageApiEndpoint, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${openaiApiKey}`,
-        },
-        body: JSON.stringify(requestPayload),
-      });
-
-      const responseText = await dalleResponse.text();
-
-      if (responseText.trim().startsWith("<")) {
-        return NextResponse.json<GenerateApiResponse>(
-          {
-            success: false,
-            error: `API 主機 (${baseUrl}) 回傳了 HTML 錯誤網頁 (HTTP ${dalleResponse.status})。請檢查主機網址、API Key 或該中轉站是否支援模型 ${imageModel}。`,
+      const fetchOneImage = async (index: number): Promise<void> => {
+        const res = await fetch(imageApiEndpoint, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${openaiApiKey}`,
           },
-          { status: 502 }
-        );
-      }
+          body: JSON.stringify(buildPayload()),
+        });
 
-      let dalleData: any;
+        const text = await res.text();
+
+        if (text.trim().startsWith("<")) {
+          throw new Error(`API 主機 (${baseUrl}) 回傳了 HTML 錯誤網頁 (HTTP ${res.status})。請檢查主機網址、API Key 或模型 ${imageModel}。`);
+        }
+
+        let data: any;
+        try {
+          data = JSON.parse(text);
+        } catch {
+          throw new Error(`圖像 ${index + 1} 回傳非 JSON 格式：${text.slice(0, 80)}...`);
+        }
+
+        if (!res.ok) {
+          throw new Error(data.error?.message || data.message || `圖像 ${index + 1} 生成失敗 (HTTP ${res.status})`);
+        }
+
+        const url = data.data?.[0]?.url || data.data?.[0]?.b64_json;
+        if (!url) {
+          throw new Error(`圖像 ${index + 1} API 回傳結果中未找到圖片資料。`);
+        }
+
+        allUrls.push(url);
+        if (index === 0) firstRevisedPrompt = data.data?.[0]?.revised_prompt || synthesizedPrompt;
+      };
+
       try {
-        dalleData = JSON.parse(responseText);
-      } catch (parseErr) {
+        if (aspectRatio === "A4") {
+          // A4 循序發送：避免中轉站並發競爭條件導致第一張退回 1:1 預設尺寸
+          for (let i = 0; i < imageCount; i++) {
+            await fetchOneImage(i);
+          }
+        } else {
+          // 標準比例：使用 Promise.all 平行發送以最大化速度
+          await Promise.all(
+            Array.from({ length: imageCount }, (_, i) => fetchOneImage(i))
+          );
+        }
+      } catch (fetchErr: any) {
         return NextResponse.json<GenerateApiResponse>(
-          {
-            success: false,
-            error: `中轉站 API 回傳非 JSON 格式：${responseText.slice(0, 100)}...`,
-          },
+          { success: false, error: fetchErr.message || "圖像生成請求失敗" },
           { status: 500 }
         );
       }
 
-      if (!dalleResponse.ok) {
-        return NextResponse.json<GenerateApiResponse>(
-          {
-            success: false,
-            error: dalleData.error?.message || dalleData.message || `${imageModel} 圖像生成失敗 (HTTP ${dalleResponse.status})`,
-          },
-          { status: dalleResponse.status }
-        );
-      }
-
-      if (!dalleData.data || !Array.isArray(dalleData.data) || dalleData.data.length === 0) {
-        return NextResponse.json<GenerateApiResponse>(
-          {
-            success: false,
-            error: `API 回傳結果中未找到圖片資料。`,
-          },
-          { status: 500 }
-        );
-      }
-
-      generatedImageUrls = dalleData.data.map((item: any) => item.url || item.b64_json);
-      revisedPromptOutput = dalleData.data[0]?.revised_prompt || synthesizedPrompt;
+      generatedImageUrls = allUrls;
+      revisedPromptOutput = firstRevisedPrompt;
     } else if (provider === "replicate") {
       let aspect_ratio_str = "1:1";
       if (aspectRatio === "A4") aspect_ratio_str = "1:1.414"; // 原生 A4 比例
@@ -282,9 +294,28 @@ export async function POST(req: NextRequest) {
       revisedPromptOutput = synthesizedPrompt;
     }
 
+    // 將 CDN 遠端 URL 轉為 Base64 Data URL（突破 CORS 限制，讓前端可自訂下載檔名）
+    const base64Urls = await Promise.all(
+      generatedImageUrls.map(async (urlItem: string) => {
+        if (urlItem.startsWith("data:")) return urlItem;
+        try {
+          const imgRes = await fetch(urlItem);
+          if (imgRes.ok) {
+            const arrayBuffer = await imgRes.arrayBuffer();
+            const base64 = Buffer.from(arrayBuffer).toString("base64");
+            const mimeType = imgRes.headers.get("content-type") || "image/png";
+            return `data:${mimeType};base64,${base64}`;
+          }
+        } catch (fetchErr) {
+          console.warn("後端轉 Base64 失敗，使用原始 URL:", fetchErr);
+        }
+        return urlItem;
+      })
+    );
+
     return NextResponse.json<GenerateApiResponse>({
       success: true,
-      imageUrls: generatedImageUrls,
+      imageUrls: base64Urls,
       analyzedPrompt: analyzedPrompt || undefined,
       revisedPrompt: revisedPromptOutput || undefined,
     });

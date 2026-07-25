@@ -7,6 +7,7 @@ export interface GenerationConfig {
   negativePrompt: string;
   aspectRatio: AspectRatio;
   numOutputs: number;
+  imageCount: 1 | 2 | 3 | 4; // 每次生成的圖片張數
   strength: number; // 0.1 ~ 1.0 (Image-to-Image 重繪強度)
   provider: ApiProvider;
 }

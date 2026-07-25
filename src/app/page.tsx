@@ -23,6 +23,7 @@ export default function Home() {
     negativePrompt: "",
     aspectRatio: "A4",
     numOutputs: 1,
+    imageCount: 1,
     strength: 0.75,
     provider: "openai",
   });
@@ -40,7 +41,7 @@ export default function Home() {
   const [isGenerating, setIsGenerating] = useState(false);
   const [apiError, setApiError] = useState<string | null>(null);
   const [result, setResult] = useState<{
-    generatedImageUrl: string;
+    imageUrls: string[];  // 支援多張圖片
     analyzedPrompt?: string;
     revisedPrompt?: string;
     usedModel?: string;
@@ -105,18 +106,11 @@ export default function Home() {
     setIsGenerating(false);
 
     if (response.success && response.imageUrls && response.imageUrls.length > 0) {
-      let generatedUrl = response.imageUrls[0];
-
-      // 若選取 A4 比例，自動進行無損 Canvas 後處理，轉為精準 1024x1448 (1:1.414) A4 實體圖檔
-      if (config.aspectRatio === "A4") {
-        generatedUrl = await cropToA4Ratio(generatedUrl);
-      }
-
       const activeModel = config.provider === "openai" ? (userKeys.imageModel || "dall-e-3") : "flux-schnell";
       const activeBaseUrl = userKeys.baseUrl || "https://api.openai.com";
 
       const newResult = {
-        generatedImageUrl: generatedUrl,
+        imageUrls: response.imageUrls,
         analyzedPrompt: response.analyzedPrompt,
         revisedPrompt: response.revisedPrompt,
         usedModel: activeModel,
@@ -125,18 +119,17 @@ export default function Home() {
 
       setResult(newResult);
 
-      // 新增至歷史紀錄
-      const newHistoryItem: HistoryItem = {
-        id: Date.now().toString(),
+      const newItems: HistoryItem[] = response.imageUrls.map((url, idx) => ({
+        id: `${Date.now()}-${idx}`,
         timestamp: Date.now(),
         originalImage: uploadedImage,
-        generatedImageUrl: generatedUrl,
+        generatedImageUrl: url,
         prompt: config.prompt || "無文字提示詞 (從圖片分析)",
         aspectRatio: config.aspectRatio,
         analyzedPrompt: response.analyzedPrompt,
-      };
+      }));
 
-      const updatedHistory = [newHistoryItem, ...history];
+      const updatedHistory = [...newItems, ...history];
       setHistory(updatedHistory);
       try {
         localStorage.setItem("ai_studio_history", JSON.stringify(updatedHistory));
@@ -144,7 +137,6 @@ export default function Home() {
         console.error("儲存歷史紀錄失敗:", e);
       }
 
-      // 自動滾動至結果展示區
       setTimeout(() => {
         resultRef.current?.scrollIntoView({ behavior: "smooth" });
       }, 200);
@@ -162,7 +154,7 @@ export default function Home() {
       aspectRatio: item.aspectRatio,
     }));
     setResult({
-      generatedImageUrl: item.generatedImageUrl,
+      imageUrls: [item.generatedImageUrl],
       analyzedPrompt: item.analyzedPrompt,
       usedModel: userKeys.imageModel || "dall-e-3",
     });
@@ -244,7 +236,7 @@ export default function Home() {
           {!isGenerating && result && (
             <ResultViewer
               originalImage={uploadedImage}
-              generatedImageUrl={result.generatedImageUrl}
+              imageUrls={result.imageUrls}
               analyzedPrompt={result.analyzedPrompt}
               revisedPrompt={result.revisedPrompt}
               prompt={config.prompt}
