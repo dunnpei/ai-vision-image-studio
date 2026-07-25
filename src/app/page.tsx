@@ -86,6 +86,19 @@ export default function Home() {
     }
   };
 
+  // 處理單圖獨立刪除歷史紀錄
+  const handleDeleteHistoryItem = (id: string) => {
+    setHistory((prev) => {
+      const updated = prev.filter((item) => item.id !== id);
+      try {
+        localStorage.setItem("ai_studio_history", JSON.stringify(updated));
+      } catch (e) {
+        console.error("寫入 LocalStorage 失敗:", e);
+      }
+      return updated;
+    });
+  };
+
   // 發送生成請求
   const handleGenerate = async () => {
     if (!config.prompt.trim() && !uploadedImage) {
@@ -252,6 +265,7 @@ export default function Home() {
             history={history}
             onSelectHistory={handleSelectHistoryItem}
             onClearHistory={handleClearHistory}
+            onDeleteHistoryItem={handleDeleteHistoryItem}
           />
         </div>
       </main>
