@@ -22,7 +22,7 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
   userKeys,
 }) => {
   const aspectRatios: { label: string; value: AspectRatio; iconRatio: string }[] = [
-    { label: "A4 (2K高畫質)", value: "A4", iconRatio: "w-3.5 h-5" },
+    { label: "A4構圖 (1:1.414)", value: "A4", iconRatio: "w-3.5 h-5" },
     { label: "1:1 (正方形)", value: "1:1", iconRatio: "w-4 h-4" },
     { label: "16:9 (寬螢幕)", value: "16:9", iconRatio: "w-5 h-3" },
     { label: "9:16 (直向海報)", value: "9:16", iconRatio: "w-3 h-5" },

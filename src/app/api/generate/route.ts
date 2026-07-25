@@ -52,7 +52,7 @@ export async function POST(req: NextRequest) {
     let analyzedPrompt = "";
 
     // -------------------------------------------------------------
-    // 步驟一：多模態圖片特徵分析 (Vision Model: 自訂模型或 gpt-4o)
+    // 步驟一：多模態圖片特徵分析 (Vision Model)
     // -------------------------------------------------------------
     if (image && openaiApiKey) {
       try {
@@ -69,7 +69,7 @@ export async function POST(req: NextRequest) {
               {
                 role: "system",
                 content:
-                  "你是一位資深的視覺分析大師與 AI 圖像 Prompt 專家。請深入分析使用者上傳的圖片，提煉出該圖的藝術風格、構圖、主題色彩、光影質感與核心物件特徵。請輸出一段精準且詳細的英文風格描述 (Under 100 words)，適合做為 AI 繪圖模型 (DALL-E 3 / Stable Diffusion) 的提示詞參考。",
+                  "你是一位資深的視覺分析大師與 AI 圖像 Prompt 專家。請深入分析使用者上傳的圖片，提煉出該圖的藝術風格、構圖、主題色彩、光影質感與核心物件特徵。請輸出一段精準且詳細的英文風格描述 (Under 100 words)，適合做為 AI 繪圖模型的提示詞參考。",
               },
               {
                 role: "user",
@@ -91,11 +91,14 @@ export async function POST(req: NextRequest) {
           }),
         });
 
-        if (visionResponse.ok) {
-          const visionData = await visionResponse.json();
-          analyzedPrompt = visionData.choices?.[0]?.message?.content?.trim() || "";
-        } else {
-          console.warn("Vision API 回傳非 200，將跳過原圖分析:", await visionResponse.text());
+        const visionText = await visionResponse.text();
+        if (visionResponse.ok && !visionText.trim().startsWith("<")) {
+          try {
+            const visionData = JSON.parse(visionText);
+            analyzedPrompt = visionData.choices?.[0]?.message?.content?.trim() || "";
+          } catch (e) {
+            console.warn("Vision 解析非 JSON 格式:", visionText.slice(0, 100));
+          }
         }
       } catch (visionErr) {
         console.error("Vision 分析失敗，繼續進行純提示詞生成:", visionErr);
@@ -115,6 +118,10 @@ export async function POST(req: NextRequest) {
       synthesizedPrompt += ` [Avoid elements: ${negativePrompt.trim()}]`;
     }
 
+    if (aspectRatio === "A4") {
+      synthesizedPrompt += " [Format: ISO 216 A4 vertical poster document, 1:1.414 aspect ratio, full-bleed design, complete text inside canvas]";
+    }
+
     if (!synthesizedPrompt.trim()) {
       return NextResponse.json<GenerateApiResponse>(
         { success: false, error: "請輸入提示詞或上傳圖片以供分析！" },
@@ -123,19 +130,45 @@ export async function POST(req: NextRequest) {
     }
 
     // -------------------------------------------------------------
-    // 步驟三：呼叫圖像生成 API
+    // 步驟三：呼叫圖像生成 API (支援原生 A4 1024x1448 與尺寸參數)
     // -------------------------------------------------------------
     let generatedImageUrls: string[] = [];
     let revisedPromptOutput = "";
 
     if (provider === "openai") {
-      // 尺寸與比例適配 (精準 A4 比例 1 : 1.414)
-      let imageSize: string = "1024x1024";
-      if (aspectRatio === "A4") imageSize = "1024x1448"; // 真正 ISO 216 A4 比例 (1024x1448)
-      if (aspectRatio === "16:9") imageSize = "1792x1024";
-      if (aspectRatio === "9:16") imageSize = "1024x1792";
-
+      // 尺寸與比例適配
       const imageApiEndpoint = `${baseUrl}/v1/images/generations`;
+
+      let requestPayload: any;
+
+      if (aspectRatio === "A4") {
+        // A4 比例：完全不傳 size 欄位，僅傳 width/height
+        // gpt-image-2 遇到 size 與 width/height 並存時，優先採用 size 而忽略 width/height
+        // 因此必須徹底移除 size，讓模型直接依照 width:1024, height:1448 生成精準 A4 圖片
+        requestPayload = {
+          model: imageModel,
+          prompt: synthesizedPrompt,
+          n: 1,
+          width: 1024,
+          height: 1448,
+          quality: "hd",
+          response_format: "url",
+        };
+      } else {
+        // 其他標準比例：使用白名單 size 字串
+        let imageSize = "1024x1024";
+        if (aspectRatio === "16:9") imageSize = "1792x1024";
+        if (aspectRatio === "9:16") imageSize = "1024x1792";
+
+        requestPayload = {
+          model: imageModel,
+          prompt: synthesizedPrompt,
+          n: 1,
+          size: imageSize,
+          quality: "hd",
+          response_format: "url",
+        };
+      }
 
       const dalleResponse = await fetch(imageApiEndpoint, {
         method: "POST",
@@ -143,25 +176,51 @@ export async function POST(req: NextRequest) {
           "Content-Type": "application/json",
           Authorization: `Bearer ${openaiApiKey}`,
         },
-        body: JSON.stringify({
-          model: imageModel,
-          prompt: synthesizedPrompt,
-          n: 1,
-          size: imageSize,
-          quality: "hd",
-          response_format: "url",
-        }),
+        body: JSON.stringify(requestPayload),
       });
 
-      const dalleData = await dalleResponse.json();
+      const responseText = await dalleResponse.text();
+
+      if (responseText.trim().startsWith("<")) {
+        return NextResponse.json<GenerateApiResponse>(
+          {
+            success: false,
+            error: `API 主機 (${baseUrl}) 回傳了 HTML 錯誤網頁 (HTTP ${dalleResponse.status})。請檢查主機網址、API Key 或該中轉站是否支援模型 ${imageModel}。`,
+          },
+          { status: 502 }
+        );
+      }
+
+      let dalleData: any;
+      try {
+        dalleData = JSON.parse(responseText);
+      } catch (parseErr) {
+        return NextResponse.json<GenerateApiResponse>(
+          {
+            success: false,
+            error: `中轉站 API 回傳非 JSON 格式：${responseText.slice(0, 100)}...`,
+          },
+          { status: 500 }
+        );
+      }
 
       if (!dalleResponse.ok) {
         return NextResponse.json<GenerateApiResponse>(
           {
             success: false,
-            error: dalleData.error?.message || `${imageModel} 圖像生成失敗 (${dalleResponse.status})`,
+            error: dalleData.error?.message || dalleData.message || `${imageModel} 圖像生成失敗 (HTTP ${dalleResponse.status})`,
           },
           { status: dalleResponse.status }
+        );
+      }
+
+      if (!dalleData.data || !Array.isArray(dalleData.data) || dalleData.data.length === 0) {
+        return NextResponse.json<GenerateApiResponse>(
+          {
+            success: false,
+            error: `API 回傳結果中未找到圖片資料。`,
+          },
+          { status: 500 }
         );
       }
 
@@ -169,7 +228,7 @@ export async function POST(req: NextRequest) {
       revisedPromptOutput = dalleData.data[0]?.revised_prompt || synthesizedPrompt;
     } else if (provider === "replicate") {
       let aspect_ratio_str = "1:1";
-      if (aspectRatio === "A4") aspect_ratio_str = "3:4";
+      if (aspectRatio === "A4") aspect_ratio_str = "1:1.414"; // 原生 A4 比例
       if (aspectRatio === "16:9") aspect_ratio_str = "16:9";
       if (aspectRatio === "9:16") aspect_ratio_str = "9:16";
 
@@ -187,12 +246,22 @@ export async function POST(req: NextRequest) {
           input: {
             prompt: synthesizedPrompt,
             aspect_ratio: aspect_ratio_str,
+            width: aspectRatio === "A4" ? 1024 : undefined,
+            height: aspectRatio === "A4" ? 1448 : undefined,
             ...(image ? { image, prompt_strength: strength } : {}),
           },
         }),
       });
 
-      const replicateData = await replicateRes.json();
+      const replicateText = await replicateRes.text();
+      if (replicateText.trim().startsWith("<")) {
+        return NextResponse.json<GenerateApiResponse>(
+          { success: false, error: "Replicate API 回傳了 HTML 錯誤網頁，請檢查 Token。" },
+          { status: 502 }
+        );
+      }
+
+      const replicateData = JSON.parse(replicateText);
 
       if (!replicateRes.ok) {
         return NextResponse.json<GenerateApiResponse>(
@@ -209,11 +278,6 @@ export async function POST(req: NextRequest) {
         generatedImageUrls = output;
       } else if (typeof output === "string") {
         generatedImageUrls = [output];
-      } else {
-        return NextResponse.json<GenerateApiResponse>(
-          { success: false, error: "Replicate 回傳了非預期的圖片格式" },
-          { status: 500 }
-        );
       }
       revisedPromptOutput = synthesizedPrompt;
     }

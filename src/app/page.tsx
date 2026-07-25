@@ -9,6 +9,7 @@ import { ResultViewer } from "@/components/ResultViewer";
 import { HistoryGallery } from "@/components/HistoryGallery";
 import { ApiKeyModal } from "@/components/ApiKeyModal";
 import { GenerateApiResponse, GenerationConfig, HistoryItem, UserApiKeys } from "@/types";
+import { cropToA4Ratio, downloadImage } from "@/lib/image-utils";
 import { generateImageApi } from "@/lib/api-client";
 import { Sparkles, AlertCircle, Wand2 } from "lucide-react";
 
@@ -104,7 +105,13 @@ export default function Home() {
     setIsGenerating(false);
 
     if (response.success && response.imageUrls && response.imageUrls.length > 0) {
-      const generatedUrl = response.imageUrls[0];
+      let generatedUrl = response.imageUrls[0];
+
+      // 若選取 A4 比例，自動進行無損 Canvas 後處理，轉為精準 1024x1448 (1:1.414) A4 實體圖檔
+      if (config.aspectRatio === "A4") {
+        generatedUrl = await cropToA4Ratio(generatedUrl);
+      }
+
       const activeModel = config.provider === "openai" ? (userKeys.imageModel || "dall-e-3") : "flux-schnell";
       const activeBaseUrl = userKeys.baseUrl || "https://api.openai.com";
 

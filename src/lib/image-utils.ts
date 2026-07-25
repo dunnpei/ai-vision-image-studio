@@ -16,7 +16,6 @@ export function fileToBase64(file: File): Promise<string> {
 
 /**
  * 自動檢測圖片容量並使用 Canvas 進行前端壓縮
- * 預設若超過 maxSizeMB (10MB) 會壓縮，或解析度過大時進行適度縮放
  */
 export async function compressImageIfNeeded(
   file: File,
@@ -26,10 +25,8 @@ export async function compressImageIfNeeded(
   const originalSize = file.size;
   const sizeMB = originalSize / (1024 * 1024);
 
-  // 讀取成 Base64
   const base64Data = await fileToBase64(file);
 
-  // 如果小於容量限制且非極度巨大像素，可不強制壓縮，但若大於則壓縮
   if (sizeMB <= maxSizeMB) {
     return {
       base64: base64Data,
@@ -46,7 +43,6 @@ export async function compressImageIfNeeded(
       let width = img.width;
       let height = img.height;
 
-      // 依最大長寬比例縮放
       if (width > maxDimension || height > maxDimension) {
         if (width > height) {
           height = Math.round((height * maxDimension) / width);
@@ -66,13 +62,9 @@ export async function compressImageIfNeeded(
         return reject(new Error("Canvas 上下文取得失敗"));
       }
 
-      // 繪製至 Canvas
       ctx.drawImage(img, 0, 0, width, height);
 
-      // 輸出 JPEG 格式，品質 0.85
       const compressedBase64 = canvas.toDataURL("image/jpeg", 0.85);
-
-      // 計算約略大小 (Base64 長度 * 0.75)
       const approxNewSize = Math.round((compressedBase64.length * 3) / 4);
 
       resolve({
@@ -84,6 +76,14 @@ export async function compressImageIfNeeded(
     };
     img.onerror = (err) => reject(err);
   });
+}
+
+/**
+ * 零後製裁切：100% 原汁原味呈現 AI 原生生成的完整畫幅與內容，確保 0% 內容被切掉
+ */
+export async function cropToA4Ratio(imageUrl: string): Promise<string> {
+  // 直接回傳 AI 原生圖像，不做任何後製裁切或變形，100% 保留圖片頂部與底部所有細節
+  return imageUrl;
 }
 
 /**
@@ -104,7 +104,6 @@ export async function downloadImage(url: string, filename: string = "generated-i
     URL.revokeObjectURL(blobUrl);
   } catch (err) {
     console.error("下載圖片失敗:", err);
-    // 回退方案：開啟新頁面
     window.open(url, "_blank");
   }
 }
