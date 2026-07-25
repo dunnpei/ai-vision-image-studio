@@ -1,0 +1,133 @@
+/**
+ * 前端圖片處理工具
+ */
+
+/**
+ * 將 File 物件轉為 Base64 Data URL
+ */
+export function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.readAsDataURL(file);
+    reader.onload = () => resolve(reader.result as string);
+    reader.onerror = (error) => reject(error);
+  });
+}
+
+/**
+ * 自動檢測圖片容量並使用 Canvas 進行前端壓縮
+ * 預設若超過 maxSizeMB (10MB) 會壓縮，或解析度過大時進行適度縮放
+ */
+export async function compressImageIfNeeded(
+  file: File,
+  maxSizeMB: number = 10,
+  maxDimension: number = 2048
+): Promise<{ base64: string; isCompressed: boolean; originalSize: number; newSize: number }> {
+  const originalSize = file.size;
+  const sizeMB = originalSize / (1024 * 1024);
+
+  // 讀取成 Base64
+  const base64Data = await fileToBase64(file);
+
+  // 如果小於容量限制且非極度巨大像素，可不強制壓縮，但若大於則壓縮
+  if (sizeMB <= maxSizeMB) {
+    return {
+      base64: base64Data,
+      isCompressed: false,
+      originalSize,
+      newSize: originalSize,
+    };
+  }
+
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.src = base64Data;
+    img.onload = () => {
+      let width = img.width;
+      let height = img.height;
+
+      // 依最大長寬比例縮放
+      if (width > maxDimension || height > maxDimension) {
+        if (width > height) {
+          height = Math.round((height * maxDimension) / width);
+          width = maxDimension;
+        } else {
+          width = Math.round((width * maxDimension) / height);
+          height = maxDimension;
+        }
+      }
+
+      const canvas = document.createElement("canvas");
+      canvas.width = width;
+      canvas.height = height;
+
+      const ctx = canvas.getContext("2d");
+      if (!ctx) {
+        return reject(new Error("Canvas 上下文取得失敗"));
+      }
+
+      // 繪製至 Canvas
+      ctx.drawImage(img, 0, 0, width, height);
+
+      // 輸出 JPEG 格式，品質 0.85
+      const compressedBase64 = canvas.toDataURL("image/jpeg", 0.85);
+
+      // 計算約略大小 (Base64 長度 * 0.75)
+      const approxNewSize = Math.round((compressedBase64.length * 3) / 4);
+
+      resolve({
+        base64: compressedBase64,
+        isCompressed: true,
+        originalSize,
+        newSize: approxNewSize,
+      });
+    };
+    img.onerror = (err) => reject(err);
+  });
+}
+
+/**
+ * 觸發瀏覽器下載圖片
+ */
+export async function downloadImage(url: string, filename: string = "generated-image.png"): Promise<void> {
+  try {
+    const response = await fetch(url);
+    const blob = await response.blob();
+    const blobUrl = URL.createObjectURL(blob);
+
+    const a = document.createElement("a");
+    a.href = blobUrl;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(blobUrl);
+  } catch (err) {
+    console.error("下載圖片失敗:", err);
+    // 回退方案：開啟新頁面
+    window.open(url, "_blank");
+  }
+}
+
+/**
+ * 複製文字/連結至剪貼簿
+ */
+export async function copyToClipboard(text: string): Promise<boolean> {
+  try {
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } else {
+      const textArea = document.createElement("textarea");
+      textArea.value = text;
+      document.body.appendChild(textArea);
+      textArea.select();
+      document.execCommand("copy");
+      document.body.removeChild(textArea);
+      return true;
+    }
+  } catch (err) {
+    console.error("複製失敗:", err);
+    return false;
+  }
+}
